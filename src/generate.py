@@ -26,6 +26,7 @@ INDICATORS = [
     {"symbol": "KS200",   "fetch": "^KS200", "name": "KOSPI 200",     "desc": "코스피 200개 기업 지수"},
     {"symbol": "DJI",     "fetch": "DJI",    "name": "다우존스 지수",   "desc": "미국 우량주 30개 종목"},
     {"symbol": "IXIC",    "fetch": "IXIC",   "name": "나스닥 종합지수", "desc": "미국 기술주 중심"},
+    {"symbol": "NDX",     "fetch": "^NDX",   "name": "나스닥 100",     "desc": "나스닥 상위 100개 비금융주"},
     {"symbol": "US500",   "fetch": "US500",  "name": "S&P 500 지수",   "desc": "미국 대표 500개 기업"},
     {"symbol": "VIX",     "fetch": "VIX",    "name": "공포 지수",       "desc": "S&P 500 변동성 지수"},
     {"symbol": "JP225",   "fetch": "^N225",  "name": "닛케이 225",     "desc": "일본 대표 지수"},
@@ -41,7 +42,7 @@ COLORS = [
     "#4e9af1", "#6af178", "#f1a34e", "#f14e4e",
     "#9b59b6", "#1abc9c", "#e74c3c", "#f39c12",
     "#3498db", "#2ecc71", "#e67e22", "#95a5a6",
-    "#f8c471", "#82e0aa",
+    "#f8c471", "#82e0aa", "#a78bfa",
 ]
 
 DEFAULT_SELECTED = {"KS11", "US500"}
@@ -389,6 +390,48 @@ def generate_html(traces: list, from_date: str, to_date: str, output_path: str):
       gap: 8px;
     }}
 
+    /* ── 선택 카운터 ── */
+    .sel-count {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+      letter-spacing: 0.3px;
+    }}
+    .sel-count.full {{
+      color: #e74c3c;
+      background: color-mix(in srgb, #e74c3c 12%, var(--surface2));
+      border-color: color-mix(in srgb, #e74c3c 30%, var(--border));
+    }}
+
+    /* ── 토스트 ── */
+    .toast {{
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: #e74c3c;
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 9px 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 9999;
+      white-space: nowrap;
+    }}
+    .toast.show {{
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }}
+
     /* ── Responsive ── */
     @media (max-width: 1100px) {{
       main {{ flex-direction: column; padding: 14px; }}
@@ -418,7 +461,10 @@ def generate_html(traces: list, from_date: str, to_date: str, output_path: str):
   <div class="sel-panel">
     <div class="card sel-card">
       <div class="sel-header">
-        <span class="sel-title">시장지표 선택</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="sel-title">시장지표 선택</span>
+          <span class="sel-count" id="sel-count">0 / 7</span>
+        </div>
         <div class="sel-actions">
           <button onclick="selectAll()">전체</button>
           <button onclick="selectNone()">해제</button>
@@ -473,6 +519,8 @@ def generate_html(traces: list, from_date: str, to_date: str, output_path: str):
   </div>
 </main>
 
+<div class="toast" id="toast">최대 7개까지 선택 가능합니다.</div>
+
 <footer>
   <span>데이터 출처: FinanceDataReader (Python)</span>
   <span>생성일자: {generated_at}</span>
@@ -480,7 +528,23 @@ def generate_html(traces: list, from_date: str, to_date: str, output_path: str):
 
 <script>
 const TRACES = {traces_json};
-const selected = new Set(TRACES.filter(t => t.default && t.available).map(t => t.symbol));
+
+/* ── 무지개 색상 (빨·주·노·초·파·남·보) ── */
+const RAINBOW = [
+  '#e74c3c',  // 빨
+  '#e67e22',  // 주
+  '#f1c40f',  // 노
+  '#2ecc71',  // 초
+  '#3498db',  // 파
+  '#4834d4',  // 남
+  '#9b59b6',  // 보
+];
+const MAX_SELECT = 7;
+
+/* ── 선택 상태: 순서 보존 배열 ── */
+let selectedOrder = TRACES
+  .filter(t => t.default && t.available)
+  .map(t => t.symbol);
 
 /* ── 테이블 렌더링 ── */
 function buildTable() {{
@@ -488,9 +552,7 @@ function buildTable() {{
   TRACES.forEach(t => {{
     const tr = document.createElement('tr');
     tr.id = 'row_' + t.symbol.replace('/', '_');
-    tr.style.setProperty('--row-color', t.color);
     if (!t.available) tr.classList.add('unavail');
-    if (selected.has(t.symbol)) tr.classList.add('active');
 
     if (t.available) {{
       tr.innerHTML = `
@@ -501,7 +563,7 @@ function buildTable() {{
                 <polyline points="1,3.5 3.5,6 8,1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </span>
-            <span class="color-dot" style="background:${{t.color}}"></span>
+            <span class="color-dot"></span>
           </div>
         </td>
         <td class="td-sym">${{t.symbol}}</td>
@@ -513,7 +575,7 @@ function buildTable() {{
     }} else {{
       tr.innerHTML = `
         <td class="td-check">
-          <span class="color-dot" style="background:${{t.color}};opacity:0.4"></span>
+          <span class="color-dot" style="background:var(--border)"></span>
         </td>
         <td class="td-sym">${{t.symbol}}</td>
         <td class="td-name">${{t.name}}</td>
@@ -523,29 +585,65 @@ function buildTable() {{
   }});
 }}
 
+/* ── 선택 순위에 따른 색상·상태 동기화 ── */
+function updateTableColors() {{
+  TRACES.forEach(t => {{
+    const rank  = selectedOrder.indexOf(t.symbol);
+    const color = rank >= 0 ? RAINBOW[rank] : null;
+    const row   = document.getElementById('row_' + t.symbol.replace('/', '_'));
+    if (!row) return;
+
+    row.classList.toggle('active', rank >= 0);
+    row.style.setProperty('--row-color', color ?? 'var(--border)');
+
+    const dot = row.querySelector('.color-dot');
+    if (dot) dot.style.background = color ?? 'var(--border)';
+  }});
+
+  const cnt = selectedOrder.length;
+  const el  = document.getElementById('sel-count');
+  el.textContent = cnt + ' / ' + MAX_SELECT;
+  el.classList.toggle('full', cnt >= MAX_SELECT);
+}}
+
+/* ── 토스트 ── */
+let _toastTimer = null;
+function showLimitToast() {{
+  const toast = document.getElementById('toast');
+  toast.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+}}
+
+/* ── 선택 토글 ── */
 function toggle(sym) {{
-  selected.has(sym) ? selected.delete(sym) : selected.add(sym);
-  document.getElementById('row_' + sym.replace('/', '_')).classList.toggle('active', selected.has(sym));
+  const idx = selectedOrder.indexOf(sym);
+  if (idx >= 0) {{
+    selectedOrder.splice(idx, 1);
+  }} else {{
+    if (selectedOrder.length >= MAX_SELECT) {{
+      showLimitToast();
+      return;
+    }}
+    selectedOrder.push(sym);
+  }}
+  updateTableColors();
   render();
 }}
+
 function selectAll() {{
-  TRACES.filter(t => t.available).forEach(t => {{
-    selected.add(t.symbol);
-    document.getElementById('row_' + t.symbol.replace('/', '_')).classList.add('active');
-  }});
+  selectedOrder = TRACES.filter(t => t.available).map(t => t.symbol).slice(0, MAX_SELECT);
+  updateTableColors();
   render();
 }}
 function selectNone() {{
-  selected.clear();
-  document.querySelectorAll('#ind-tbody tr').forEach(tr => tr.classList.remove('active'));
+  selectedOrder = [];
+  updateTableColors();
   render();
 }}
 function selectDefault() {{
-  selectNone();
-  TRACES.filter(t => t.default && t.available).forEach(t => {{
-    selected.add(t.symbol);
-    document.getElementById('row_' + t.symbol.replace('/', '_')).classList.add('active');
-  }});
+  selectedOrder = TRACES.filter(t => t.default && t.available).map(t => t.symbol);
+  updateTableColors();
   render();
 }}
 
@@ -587,25 +685,27 @@ function setTheme(name) {{
 let initialized = false;
 
 function render() {{
-  const active = TRACES.filter(t => selected.has(t.symbol));
-  const noSel  = document.getElementById('no-sel');
+  const noSel = document.getElementById('no-sel');
 
-  if (active.length === 0) {{
+  if (selectedOrder.length === 0) {{
     noSel.style.display = 'flex';
     if (initialized) Plotly.react('chart', [], layout());
     return;
   }}
   noSel.style.display = 'none';
 
-  const plotData = active.map(t => ({{
-    x: t.x,
-    y: t.y,
-    name: t.name,
-    type: 'scatter',
-    mode: 'lines',
-    line: {{ color: t.color, width: 1.8 }},
-    hovertemplate: '<b>%{{fullData.name}}</b><br>날짜: %{{x}}<br>정규화: %{{y:.2f}}<extra></extra>',
-  }}));
+  const plotData = selectedOrder.map((sym, i) => {{
+    const t = TRACES.find(tr => tr.symbol === sym);
+    return {{
+      x: t.x,
+      y: t.y,
+      name: t.name,
+      type: 'scatter',
+      mode: 'lines',
+      line: {{ color: RAINBOW[i], width: 1.8 }},
+      hovertemplate: '<b>%{{fullData.name}}</b><br>날짜: %{{x}}<br>정규화: %{{y:.2f}}<extra></extra>',
+    }};
+  }});
 
   Plotly.react('chart', plotData, layout(), config());
   initialized = true;
@@ -666,6 +766,7 @@ function config() {{
 }}
 
 buildTable();
+updateTableColors();
 render();
 </script>
 
